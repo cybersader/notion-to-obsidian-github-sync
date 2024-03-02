@@ -4,6 +4,62 @@ import AdmZip from "adm-zip";
 import { createWriteStream, promises as fs } from "fs";
 import { join } from "path";
 
+// FUNCTIONS FOR OBSIDIAN-RELATED PROCESSING
+
+const adjustFilenames = async (dir, prefix = '', parentPath = '') => {
+  const entries = await fs.readdir(dir, { withFileTypes: true });
+  let fileCounter = 1;
+  let filenameChanges = {}; // Initialize an object to track filename changes
+
+  for (const entry of entries) {
+    const fullPath = join(dir, entry.name);
+    const relativePath = join(parentPath, entry.name); // Calculate relative path for use in markdown links
+    if (entry.isDirectory()) {
+      // Recurse into subdirectories and accumulate filename changes
+      const subdirectoryChanges = await adjustFilenames(fullPath, `${prefix}${fileCounter.toString().padStart(2, '0')}-`, join(parentPath, `${prefix}${fileCounter.toString().padStart(2, '0')}-${entry.name}`));
+      filenameChanges = { ...filenameChanges, ...subdirectoryChanges };
+    } else if (entry.isFile() && entry.name.endsWith('.md')) {
+      // Process markdown files: remove page ID, prepend numbering
+      const newName = `${prefix}${fileCounter.toString().padStart(2, '0')}-${entry.name.replace(/-\w{32}\.md$/, '.md')}`;
+      const newFullPath = join(dir, newName);
+      const newRelativePath = join(parentPath, newName); // New relative path for markdown links
+      await fs.rename(fullPath, newFullPath);
+
+      // Map old relative path to new relative path
+      filenameChanges[relativePath] = newRelativePath;
+    }
+    fileCounter++;
+  }
+
+  return filenameChanges; // Return the mapping of changed filenames
+};
+
+
+const updateInternalLinks = async (dir, mappings) => {
+  const entries = await fs.readdir(dir, { withFileTypes: true });
+
+  for (const entry of entries) {
+    const fullPath = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      // Recurse into subdirectories
+      await updateInternalLinks(fullPath, mappings);
+    } else if (entry.isFile() && entry.name.endsWith('.md')) {
+      let content = await fs.readFile(fullPath, 'utf8');
+      // Replace old paths with new paths in markdown content
+      for (const [oldPath, newPath] of Object.entries(mappings)) {
+        // You'll need a more sophisticated replace logic to match markdown link syntax
+        content = content.replace(new RegExp(oldPath, 'g'), newPath);
+      }
+      await fs.writeFile(fullPath, content, 'utf8');
+    }
+  }
+};
+
+
+
+
+// ---------------------------------------------------------------------------------
+
 // Class for tracking Notion export progress and status
 type NotionTask = {
   id: string;
@@ -144,9 +200,7 @@ const exportFromNotion = async (
   });
 };
 
-/*
-Extract files from ZIP file to destination (workspaceDir) from filename (workspaceZip)
-*/
+// Extract files from ZIP file to destination (workspaceDir) from filename (workspaceZip)
 const extractZip = async (
   filename: string,
   destination: string
@@ -184,7 +238,7 @@ const extractZip = async (
       const partZip = new AdmZip(partFile);
 
       // Extract the contents of the "Part-*.zip" file to the destination directory.
-      partZip.extractAllTo(destination, true);  // extract split zip file ("part") into destination (workspaceDir)
+      partZip.extractAllTo(destination, true);  // extract split zip file ("part") into the destination (workspaceDir)
 
       // After extraction, delete the "Part-*.zip" file as it's no longer needed.
       // This helps clean up the destination directory.
@@ -235,10 +289,18 @@ const run = async (): Promise<void> => {
   await fs.rm(workspaceDir, { recursive: true, force: true });  // remove old or existing workspace directory
   await fs.mkdir(workspaceDir, { recursive: true });            // create workspace directory
   await extractZip(workspaceZip, workspaceDir);                 // extract zip file to workspace directory
+
+  // FUTURE TODOS:
   // TODO - option to fix long file names and paths for Windows issues ... ugh
   // TODO - option to automatically reformat markdown files in a certain way
   // TODO - option to prepend numbering or organizational string to the front of filename or directory
-  // TODO -  Obsidian community plugin code somehow integrated into system?
+  // TODO - Obsidian community plugin code somehow integrated into the system?
+
+  // Adjust filenames and capture the mapping of changes for updating internal links
+  const filenameChanges = await adjustFilenames(workspaceDir);
+  // Use filenameChanges to update internal markdown links
+  await updateInternalLinks(workspaceDir, filenameChanges);
+  
   await fs.unlink(workspaceZip);    // close fs link for file
 
   console.log("✅ Export downloaded and unzipped.");
