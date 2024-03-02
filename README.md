@@ -1,4 +1,5 @@
-# Notion Guardian
+# Notion-to-obsidian
+- this is a fork of the notion-guardian repo with some extended functionality for automating structuring for an obsidian vault. This can be used with obsidian-git and/or git+obsidian use to sync Notion to GitHub.  
 
 A tool that automatically backups your [Notion](notion.so) workspace and commits changes to another repository.
 
