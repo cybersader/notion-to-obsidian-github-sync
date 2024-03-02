@@ -105,7 +105,7 @@ const exportFromNotion = async (
     /*
       once all tasks have finished -> task.state==="success", then grab file export URL and token
     */
-    console.log(`task.state: ${task.state}`);
+    // console.log(`task.state: ${task.state}`); // Log state for testing
     if (task.state === "success") {
       exportURL = task.status.exportURL;
       fileTokenCookie = getTasksRequestCookies.find((cookie) =>
@@ -153,13 +153,20 @@ const extractZip = async (
 ): Promise<void> => {
   // Initialize AdmZip with the downloaded zip file.
   const zip = new AdmZip(filename);
+  
   // Extract the entire contents of the zip file to the specified destination directory.
+  // The `true` argument specifies to overwrite files if they already exist.
   zip.extractAllTo(destination, true);
 
-  // Retrieve the names of all files extracted from the zip.
+  // Retrieve a list of all entries (files and directories) within the zip file.
+  // This is used to identify specific files that need special handling (like "Part-*.zip" files).
   const extractedFiles = zip.getEntries().map((entry) => entry.entryName);
+  
   console.log(`extractedFiles: ${extractedFiles}\n\n\n`);
-  // Filter for any files named like "Part-*.zip", indicating split zip files.
+
+  // Notion's export process can split large exports into multiple zip files.
+  // These are identified by a "Part-*.zip" naming convention.
+  // Here, we filter out these split zip file names for further processing.
   const partFiles = extractedFiles.filter((name) =>
     name.match(/Part-\d+\.zip/)
   );
@@ -168,31 +175,51 @@ const extractZip = async (
   // Extract found "Part-*.zip" files to destination and delete them:
   await Promise.all(
     partFiles.map(async (partFile: string) => {  // loop over partFiles
+      // Use the `join` function to construct the full path to the "Part-*.zip" file within the destination directory.
+      // This is necessary because the `partFile` variable only contains the filename, not the full path.
       partFile = join(destination, partFile);  // move split "part" zip file into destination (workspaceDir)
-      const partZip = new AdmZip(partFile);    
+
+      // Initialize a new instance of AdmZip with the "Part-*.zip" file.
+      // This allows us to extract its contents.
+      const partZip = new AdmZip(partFile);
+
+      // Extract the contents of the "Part-*.zip" file to the destination directory.
       partZip.extractAllTo(destination, true);  // extract split zip file ("part") into destination (workspaceDir)
+
+      // After extraction, delete the "Part-*.zip" file as it's no longer needed.
+      // This helps clean up the destination directory.
       await fs.unlink(partFile);
     })
   );
 
-  // Scan the destination directory for any folders starting with "Export-".
+  // After handling "Part-*.zip" files, scan the destination directory for folders prefixed with "Export-".
+  // This prefix is used by Notion for directories containing exported content.
   const extractedFolders = await fs.readdir(destination);
   const exportFolders = extractedFolders.filter((name: string) =>
     name.startsWith("Export-")
   );
 
-  // Move the contents of found "Export-*" folders to the destination and delete them:
+  // For each "Export-*" folder found, move its contents to the root of the destination directory.
+  // This reorganization simplifies the structure of the extracted content.
   await Promise.all(
     exportFolders.map(async (folderName: string) => {
+
+      // Construct the full path to the "Export-*" folder.
       const folderPath = join(destination, folderName);
+
+      // Read the contents of the "Export-*" folder to get a list of files (and possibly subdirectories) it contains
       const contents = await fs.readdir(folderPath);
+
+      // For each item in the "Export-*" folder, move it to the root of the destination directory.
       await Promise.all(
         contents.map(async (file: string) => {
-          const filePath = join(folderPath, file);
-          const newFilePath = join(destination, file);
-          await fs.rename(filePath, newFilePath);
+          const filePath = join(folderPath, file);      // Full path to the item in the "Export-*" folder.
+          const newFilePath = join(destination, file);  // New path for the item at the root of the destination directory.
+          await fs.rename(filePath, newFilePath);       // Move the item.
         })
       );
+
+      // Once all items have been moved out of the "Export-*" folder, delete the now-empty folder.
       await fs.rmdir(folderPath);
     })
   );
@@ -208,6 +235,10 @@ const run = async (): Promise<void> => {
   await fs.rm(workspaceDir, { recursive: true, force: true });  // remove old or existing workspace directory
   await fs.mkdir(workspaceDir, { recursive: true });            // create workspace directory
   await extractZip(workspaceZip, workspaceDir);                 // extract zip file to workspace directory
+  // TODO - option to fix long file names and paths for Windows issues ... ugh
+  // TODO - option to automatically reformat markdown files in a certain way
+  // TODO - option to prepend numbering or organizational string to the front of filename or directory
+  // TODO -  Obsidian community plugin code somehow integrated into system?
   await fs.unlink(workspaceZip);    // close fs link for file
 
   console.log("✅ Export downloaded and unzipped.");
