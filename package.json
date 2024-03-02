@@ -1,0 +1,23 @@
+{
+  "name": "notion-guardian",
+  "version": "1.0.0",
+  "description": "Keeps your Notion workspace safe and version controlled at all times.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "backup": "ts-node index.ts"
+  },
+  "author": "Richard Keil",
+  "license": "MIT",
+  "dependencies": {
+    "adm-zip": "^0.5.10",
+    "axios": "^0.21",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "@tsconfig/node20": "^20.1.2",
+    "@types/adm-zip": "^0.5.3",
+    "ts-node": "^10.9.1",
+    "typescript": "^5.2.2"
+  }
+}

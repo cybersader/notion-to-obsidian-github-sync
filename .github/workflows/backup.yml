@@ -1,0 +1,49 @@
+name: "Backup Notion Workspace"
+
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    -   cron: "0 0 * * *"
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    name: Backup
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v3
+        with:
+          node-version: '20'
+
+      - name: Run backup script
+        run: npm install && npm run backup
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_SPACE_ID: ${{ secrets.NOTION_SPACE_ID }}
+          NOTION_USER_ID: ${{ secrets.NOTION_USER_ID }}
+
+      - name: Checkout backup repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.REPO_USERNAME }}/${{ secrets.REPO_NAME }}
+          token: ${{ secrets.REPO_PERSONAL_ACCESS_TOKEN }}
+          path: "backup-repo"
+      
+      - name: Commit changes to backup repo
+        env:
+          REPO_EMAIL: ${{ secrets.REPO_EMAIL }}
+          REPO_USERNAME: ${{ secrets.REPO_USERNAME }}
+        run: |
+          cp -a workspace/. backup-repo/
+          cd backup-repo
+          git config --local user.email "${REPO_EMAIL}"
+          git config --local user.name "${REPO_USERNAME}"
+          git add .
+          if [ -z "$(git status --porcelain)" ]; then
+            exit 0
+          fi
+          git commit -m "Automated Notion workspace backup"
+          git push
