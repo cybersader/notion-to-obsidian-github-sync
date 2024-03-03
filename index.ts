@@ -28,12 +28,11 @@ function escapeRegExp(string) {
 
 // 
 const adjustFilenames = async (
-  dir, 
-  skipDirName = '', 
-  filenameChanges = {}, 
-  levelCount = { currentLevel: 0 }, 
-  namingSeparator = '-', 
-  namePrefixSeparator = ' - ', 
+  dir,
+  skipDirName = '',
+  filenameChanges = {},
+  levelCount = { currentLevel: 0 },
+  namingSeparator = '_',
   parentPrefix = '',
   progressTracker = null,
   isRoot = true
@@ -46,45 +45,46 @@ const adjustFilenames = async (
 
   const entries = await fs.readdir(dir, { withFileTypes: true }).then(es => es.sort((a, b) => a.name.localeCompare(b.name))); // Sort entries for consistent ordering
   
-  if (!levelCount[levelCount.currentLevel]) {
-    levelCount[levelCount.currentLevel] = 1; // Initialize count for this level
-  }
-
+  // Iterate through each entry in the directory
   for (const entry of entries) {
-    if (entry.name === skipDirName) continue;
+    if (entry.name === skipDirName) continue; // Skip specified directory name
     
     const fullPath = join(dir, entry.name);
-    let newPrefix = parentPrefix;
-    if (parentPrefix !== '' && entry.isDirectory()) newPrefix += `${(levelCount[levelCount.currentLevel] - 1).toString().padStart(2, '0')}${namingSeparator}`;
+    // Prepare the new prefix for the current level, incremented for each item
+    let currentPrefix = `${parentPrefix}${levelCount[levelCount.currentLevel].toString().padStart(2, '0')}${namingSeparator}`;
     
     if (entry.isDirectory()) {
-      // Increment level and adjust filenames within directory
+      // Directory renaming logic
+      const dirNewName = `${currentPrefix} - ${entry.name}`; // New directory name
+      const newDirPath = join(dir, dirNewName);
+      await fs.rename(fullPath, newDirPath); // Rename directory
+      
+      // Recurse into the directory with updated paths and counters
       levelCount.currentLevel++;
-      await adjustFilenames(fullPath, skipDirName, filenameChanges, levelCount, namingSeparator, namePrefixSeparator, newPrefix, progressTracker, false);
+      await adjustFilenames(newDirPath, skipDirName, filenameChanges, levelCount, namingSeparator, currentPrefix, progressTracker, false);
       levelCount.currentLevel--;
+      filenameChanges[fullPath] = newDirPath; // Track directory renaming
     } else if (entry.isFile() && entry.name.endsWith('.md')) {
-      // Update progress for files
+      // File renaming logic for markdown files
+      const fileNewName = `${currentPrefix} - ${entry.name.replace(/\s\w{32}\.md$/, '.md')}`;
+      const newFilePath = join(dir, fileNewName);
+      await fs.rename(fullPath, newFilePath); // Rename file
+      filenameChanges[fullPath] = newFilePath; // Track file renaming
+      
+      // Update and print progress
       progressTracker.processed++;
       const progressPercentage = Math.round((progressTracker.processed / progressTracker.total) * 100);
-
-      // Construct new filename with appropriate prefix and separator
-      const newName = `${newPrefix}${levelCount[levelCount.currentLevel].toString().padStart(2, '0')}${namePrefixSeparator}${entry.name.replace(/\s\w{32}\.md$/, '.md')}`;
-      await fs.rename(fullPath, join(dir, newName));
-      filenameChanges[fullPath] = join(dir, newName);
-
-      // Print progress if it's a new 10% increment
-      if (progressPercentage >= progressTracker.lastPrintedPercentage + 10) {
+      if (progressPercentage > progressTracker.lastPrintedPercentage) {
         console.log(`Progress: ${progressTracker.processed}/${progressTracker.total} items processed (${progressPercentage}%)`);
         progressTracker.lastPrintedPercentage = progressPercentage;
       }
     }
-    
-    if (!entry.isDirectory()) {
-      levelCount[levelCount.currentLevel]++; // Increment count at current level for files only to avoid affecting directory naming
-    }
+
+    // Only increment level count for items processed at the current level
+    levelCount[levelCount.currentLevel]++;
   }
 
-  // Indicate the root level of recursion has been processed
+  // Completion message for the root call
   if (isRoot) {
     console.log("[+] Filename adjustment complete.");
   }
