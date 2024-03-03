@@ -24,6 +24,7 @@ jobs:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_SPACE_ID: ${{ secrets.NOTION_SPACE_ID }}
           NOTION_USER_ID: ${{ secrets.NOTION_USER_ID }}
+          APPEND_MODE: ${{ secrets.APPEND_MODE }}
 
       - name: Checkout backup repo
         uses: actions/checkout@v4
@@ -37,12 +38,20 @@ jobs:
           REPO_EMAIL: ${{ secrets.REPO_EMAIL }}
           REPO_USERNAME: ${{ secrets.REPO_USERNAME }}
         run: |
-          cp -a workspace/. backup-repo/
           cd backup-repo
           git config --local user.email "${REPO_EMAIL}"
           git config --local user.name "${REPO_USERNAME}"
+          if [[ "${{ secrets.APPEND_MODE }}" == "true" ]]; then
+            echo "Append mode enabled"
+            # Assuming npm run backup updates files in a 'workspace' directory
+            cp -a ../workspace/. .
+          else
+            echo "Append mode disabled, starting fresh"
+            # If necessary, implement logic here for handling a fresh start
+          fi
           git add .
           if [ -z "$(git status --porcelain)" ]; then
+            echo "No changes to commit"
             exit 0
           fi
           git commit -m "Automated Notion workspace backup"
