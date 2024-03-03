@@ -223,6 +223,7 @@ const exportFromNotion = async (
     // console.log(`task.state: ${task.state}`); // Log state for testing
     if (task.state === "success") {
       exportURL = task.status.exportURL;
+      console.log(`Export URL: ${exportURL}`);
       fileTokenCookie = getTasksRequestCookies.find((cookie) =>
         cookie.includes("file_token=")
       );
@@ -275,7 +276,7 @@ const extractZip = async (
   // This is used to identify specific files that need special handling (like "Part-*.zip" files).
   const extractedFiles = zip.getEntries().map((entry) => entry.entryName);
   
-  console.log(`extractedFiles: ${extractedFiles}\n\n\n`);
+  console.log(`extractedFiles: ${extractedFiles}`);
 
   // Notion's export process can split large exports into multiple zip files.
   // These are identified by a "Part-*.zip" naming convention.
@@ -283,7 +284,7 @@ const extractZip = async (
   const partFiles = extractedFiles.filter((name) =>
     name.match(/Part-\d+\.zip/)
   );
-  console.log(`partFiles: ${partFiles}\n\n\n`);
+  console.log(`partFiles: ${partFiles}`);
 
   // Extract found "Part-*.zip" files to destination and delete them:
   await Promise.all(
