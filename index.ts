@@ -5,6 +5,8 @@ import { createWriteStream, promises as fs } from "fs";
 import { join } from "path";
 
 // FUNCTIONS FOR OBSIDIAN-RELATED PROCESSING
+
+// recursively count both directories and files and return total count for help with progress bar printing over dirs and files
 const countItems = async (dir, skipDirName = '') => {
   let count = 0;
   const entries = await fs.readdir(dir, { withFileTypes: true });
@@ -19,44 +21,72 @@ const countItems = async (dir, skipDirName = '') => {
   return count;
 };
 
-
+// escape inputted regular expression
 function escapeRegExp(string) {
   return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // $& means the whole matched string
 }
 
-const adjustFilenames = async (dir, prefix = '', skipDirName = '', filenameChanges = {}, progressTracker = null) => {
-  // Count items for progress tracking if not already provided
-  if (!progressTracker) {
+// 
+const adjustFilenames = async (
+  dir, 
+  skipDirName = '', 
+  filenameChanges = {}, 
+  levelCount = { currentLevel: 0 }, 
+  namingSeparator = '-', 
+  namePrefixSeparator = ' - ', 
+  parentPrefix = '',
+  progressTracker = null,
+  isRoot = true
+) => {
+  // Initialize progress tracking at the root level
+  if (isRoot && !progressTracker) {
     const totalItems = await countItems(dir, skipDirName);
     progressTracker = { processed: 0, total: totalItems, lastPrintedPercentage: -10 };
   }
 
-  const entries = await fs.readdir(dir, { withFileTypes: true });
+  const entries = await fs.readdir(dir, { withFileTypes: true }).then(es => es.sort((a, b) => a.name.localeCompare(b.name))); // Sort entries for consistent ordering
   
+  if (!levelCount[levelCount.currentLevel]) {
+    levelCount[levelCount.currentLevel] = 1; // Initialize count for this level
+  }
+
   for (const entry of entries) {
-    if (entry.name === skipDirName) continue; // Skip processing for specified directory name
+    if (entry.name === skipDirName) continue;
     
     const fullPath = join(dir, entry.name);
+    let newPrefix = parentPrefix;
+    if (parentPrefix !== '' && entry.isDirectory()) newPrefix += `${(levelCount[levelCount.currentLevel] - 1).toString().padStart(2, '0')}${namingSeparator}`;
+    
     if (entry.isDirectory()) {
-      // Recurse into subdirectories, carrying filenameChanges along
-      await adjustFilenames(fullPath, `${prefix}${progressTracker.processed.toString().padStart(2, '0')}-`, skipDirName, filenameChanges, progressTracker);
+      // Increment level and adjust filenames within directory
+      levelCount.currentLevel++;
+      await adjustFilenames(fullPath, skipDirName, filenameChanges, levelCount, namingSeparator, namePrefixSeparator, newPrefix, progressTracker, false);
+      levelCount.currentLevel--;
     } else if (entry.isFile() && entry.name.endsWith('.md')) {
-      // Update progress
+      // Update progress for files
       progressTracker.processed++;
       const progressPercentage = Math.round((progressTracker.processed / progressTracker.total) * 100);
 
-      // Process markdown files: remove page ID, prepend numbering
-      const originalName = entry.name;
-      const newName = `${prefix}${progressTracker.processed.toString().padStart(2, '0')}-${entry.name.replace(/\s\w{32}\.md$/, '.md')}`;
+      // Construct new filename with appropriate prefix and separator
+      const newName = `${newPrefix}${levelCount[levelCount.currentLevel].toString().padStart(2, '0')}${namePrefixSeparator}${entry.name.replace(/\s\w{32}\.md$/, '.md')}`;
       await fs.rename(fullPath, join(dir, newName));
-      filenameChanges[join(dir, originalName)] = join(dir, newName); // Track the change
-      
+      filenameChanges[fullPath] = join(dir, newName);
+
       // Print progress if it's a new 10% increment
       if (progressPercentage >= progressTracker.lastPrintedPercentage + 10) {
-        console.log(`Progress: ${progressTracker.processed}/${progressTracker.total} files processed (${progressPercentage}%)`);
+        console.log(`Progress: ${progressTracker.processed}/${progressTracker.total} items processed (${progressPercentage}%)`);
         progressTracker.lastPrintedPercentage = progressPercentage;
       }
     }
+    
+    if (!entry.isDirectory()) {
+      levelCount[levelCount.currentLevel]++; // Increment count at current level for files only to avoid affecting directory naming
+    }
+  }
+
+  // Indicate the root level of recursion has been processed
+  if (isRoot) {
+    console.log("[+] Filename adjustment complete.");
   }
 
   return filenameChanges;
@@ -161,7 +191,7 @@ const exportFromNotion = async (
                                                                                 //taskId
 
   // Log export taskId generated from enqueueTask request for Notion API
-  console.log(`Started export as task [${taskId}].`);
+  console.log(`[+] Started export as task [${taskId}].`);
 
   
   let exportURL: string;                        //variable for storing URL to grab files from during request loop
@@ -184,7 +214,7 @@ const exportFromNotion = async (
     if (!task) throw new Error(`Task [${taskId}] not found.`);
     if (task.error) throw new Error(`Export failed with reason: ${task.error}`);
 
-    console.log(`Exported ${task.status.pagesExported} pages.`);
+    console.log(`[+] Exported ${task.status.pagesExported} pages.`);
 
     /*
       once all tasks have finished -> task.state==="success", then grab file export URL and token
@@ -196,9 +226,9 @@ const exportFromNotion = async (
         cookie.includes("file_token=")
       );
       if (!fileTokenCookie) {
-        throw new Error("Task finished but file_token cookie not found.");
+        throw new Error("[x] Task finished but file_token cookie not found.");
       }
-      console.log(`Export finished.`);
+      console.log(`[+] Export finished.`);
       break;
     }
   }
