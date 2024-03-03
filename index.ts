@@ -227,6 +227,7 @@ const exportFromNotion = async (
       fileTokenCookie = getTasksRequestCookies.find((cookie) =>
         cookie.includes("file_token=")
       );
+      console.log(`fileTokenCookie: ${fileTokenCookie}`);
       if (!fileTokenCookie) {
         throw new Error("[x] Task finished but file_token cookie not found.");
       }
