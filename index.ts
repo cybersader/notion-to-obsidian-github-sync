@@ -5,51 +5,83 @@ import { createWriteStream, promises as fs } from "fs";
 import { join } from "path";
 
 // FUNCTIONS FOR OBSIDIAN-RELATED PROCESSING
+const countItems = async (dir, skipDirName = '') => {
+  let count = 0;
+  const entries = await fs.readdir(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.name === skipDirName) continue; // Skip the specified directory
+    count++; // Count this item
+    if (entry.isDirectory()) {
+      // Recursively count items in subdirectories
+      count += await countItems(join(dir, entry.name), skipDirName);
+    }
+  }
+  return count;
+};
+
 
 function escapeRegExp(string) {
   return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // $& means the whole matched string
 }
 
-const adjustFilenames = async (dir, prefix = '', skipDirName = '', filenameChanges = {}) => {
-  const entries = await fs.readdir(dir, { withFileTypes: true });
-  let fileCounter = 1;
+const adjustFilenames = async (dir, prefix = '', skipDirName = '', filenameChanges = {}, progressTracker = null) => {
+  // Count items for progress tracking if not already provided
+  if (!progressTracker) {
+    const totalItems = await countItems(dir, skipDirName);
+    progressTracker = { processed: 0, total: totalItems, lastPrintedPercentage: -10 };
+  }
 
+  const entries = await fs.readdir(dir, { withFileTypes: true });
+  
   for (const entry of entries) {
     if (entry.name === skipDirName) continue; // Skip processing for specified directory name
     
     const fullPath = join(dir, entry.name);
     if (entry.isDirectory()) {
       // Recurse into subdirectories, carrying filenameChanges along
-      await adjustFilenames(fullPath, `${prefix}${fileCounter.toString().padStart(2, '0')}-`, skipDirName, filenameChanges);
+      await adjustFilenames(fullPath, `${prefix}${progressTracker.processed.toString().padStart(2, '0')}-`, skipDirName, filenameChanges, progressTracker);
     } else if (entry.isFile() && entry.name.endsWith('.md')) {
+      // Update progress
+      progressTracker.processed++;
+      const progressPercentage = Math.round((progressTracker.processed / progressTracker.total) * 100);
+
       // Process markdown files: remove page ID, prepend numbering
       const originalName = entry.name;
-      console.log(`${originalName}`)
-      const newName = `${prefix}${fileCounter.toString().padStart(2, '0')}-${entry.name.replace(/\s\w{32}\.md$/, '.md')}`;
+      const newName = `${prefix}${progressTracker.processed.toString().padStart(2, '0')}-${entry.name.replace(/\s\w{32}\.md$/, '.md')}`;
       await fs.rename(fullPath, join(dir, newName));
       filenameChanges[join(dir, originalName)] = join(dir, newName); // Track the change
+      
+      // Print progress if it's a new 10% increment
+      if (progressPercentage >= progressTracker.lastPrintedPercentage + 10) {
+        console.log(`Progress: ${progressTracker.processed}/${progressTracker.total} files processed (${progressPercentage}%)`);
+        progressTracker.lastPrintedPercentage = progressPercentage;
+      }
     }
-    fileCounter++;
   }
 
   return filenameChanges;
 };
 
-const updateInternalLinks = async (dir, mappings) => {
+const updateInternalLinks = async (dir, filenameChanges) => {
   const entries = await fs.readdir(dir, { withFileTypes: true });
 
   for (const entry of entries) {
     const fullPath = join(dir, entry.name);
     if (entry.isDirectory()) {
-      // Recurse into subdirectories
-      await updateInternalLinks(fullPath, mappings);
+      // Recursively process subdirectories
+      await updateInternalLinks(fullPath, filenameChanges);
     } else if (entry.isFile() && entry.name.endsWith('.md')) {
+      // Read the content of the markdown file
       let content = await fs.readFile(fullPath, 'utf8');
-      // Replace old paths with new paths in markdown content
-      for (const [oldPath, newPath] of Object.entries(mappings)) {
-        // You'll need a more sophisticated replace logic to match markdown link syntax
-        content = content.replace(new RegExp(oldPath, 'g'), newPath);
+      
+      // Replace old paths with new paths in the content
+      for (const [oldPath, newPath] of Object.entries(filenameChanges)) {
+        const escapedOldPath = escapeRegExp(oldPath); // Escape special characters in the old path
+        const regex = new RegExp(escapedOldPath, 'g');
+        content = content.replace(regex, newPath);
       }
+      
+      // Write the updated content back to the file
       await fs.writeFile(fullPath, content, 'utf8');
     }
   }
