@@ -31,43 +31,48 @@ const adjustFilenames = async (
   dir,
   skipDirName = '',
   filenameChanges = {},
-  levelCount = { currentLevel: 0 },
+  levelCount = { counts: [0], currentLevel: 0 },
   namingSeparator = '_',
   parentPrefix = '',
   progressTracker = null,
   isRoot = true
 ) => {
-  // Initialize progress tracking at the root level
   if (isRoot && !progressTracker) {
     const totalItems = await countItems(dir, skipDirName);
     progressTracker = { processed: 0, total: totalItems, lastPrintedPercentage: -10 };
   }
 
-  const entries = await fs.readdir(dir, { withFileTypes: true }).then(es => es.sort((a, b) => a.name.localeCompare(b.name))); // Sort entries for consistent ordering
-  
-  // Iterate through each entry in the directory
+  const entries = await fs.readdir(dir, { withFileTypes: true }).then(es => es.sort((a, b) => a.name.localeCompare(b.name)));
+
   for (const entry of entries) {
-    if (entry.name === skipDirName) continue; // Skip specified directory name
+    if (entry.name === skipDirName) continue;
     
     const fullPath = join(dir, entry.name);
-    // Prepare the new prefix for the current level, incremented for each item
-    let currentPrefix = `${parentPrefix}${levelCount[levelCount.currentLevel].toString().padStart(2, '0')}${namingSeparator}`;
+
+    // Ensure current level count is initialized
+    if (levelCount.counts[levelCount.currentLevel] === undefined) {
+      levelCount.counts[levelCount.currentLevel] = 0;
+    }
+    
+    // Increment count for the current level
+    levelCount.counts[levelCount.currentLevel]++;
+    
+    // Construct currentPrefix using the count for the current level
+    let currentPrefix = `${parentPrefix}${levelCount.counts[levelCount.currentLevel].toString().padStart(2, '0')}${namingSeparator}`;
     
     if (entry.isDirectory()) {
-      // Directory renaming logic
-      const dirNewName = `${currentPrefix} - ${entry.name}`; // New directory name
-      const newDirPath = join(dir, dirNewName);
+      const newDirName = `${currentPrefix}${entry.name}`;
+      const newDirPath = join(dir, newDirName);
       await fs.rename(fullPath, newDirPath); // Rename directory
+      filenameChanges[fullPath] = newDirPath; // Track directory renaming
       
-      // Recurse into the directory with updated paths and counters
+      // Recurse into directory with incremented currentLevel
       levelCount.currentLevel++;
       await adjustFilenames(newDirPath, skipDirName, filenameChanges, levelCount, namingSeparator, currentPrefix, progressTracker, false);
-      levelCount.currentLevel--;
-      filenameChanges[fullPath] = newDirPath; // Track directory renaming
+      levelCount.currentLevel--; // Decrement currentLevel after recursion
     } else if (entry.isFile() && entry.name.endsWith('.md')) {
-      // File renaming logic for markdown files
-      const fileNewName = `${currentPrefix} - ${entry.name.replace(/\s\w{32}\.md$/, '.md')}`;
-      const newFilePath = join(dir, fileNewName);
+      const newFileName = `${currentPrefix}${entry.name.replace(/\s\w{32}\.md$/, '.md')}`;
+      const newFilePath = join(dir, newFileName);
       await fs.rename(fullPath, newFilePath); // Rename file
       filenameChanges[fullPath] = newFilePath; // Track file renaming
       
@@ -79,12 +84,8 @@ const adjustFilenames = async (
         progressTracker.lastPrintedPercentage = progressPercentage;
       }
     }
-
-    // Only increment level count for items processed at the current level
-    levelCount[levelCount.currentLevel]++;
   }
 
-  // Completion message for the root call
   if (isRoot) {
     console.log("[+] Filename adjustment complete.");
   }
