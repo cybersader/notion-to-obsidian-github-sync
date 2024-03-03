@@ -6,34 +6,34 @@ import { join } from "path";
 
 // FUNCTIONS FOR OBSIDIAN-RELATED PROCESSING
 
-const adjustFilenames = async (dir, prefix = '', parentPath = '') => {
+function escapeRegExp(string) {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // $& means the whole matched string
+}
+
+const adjustFilenames = async (dir, prefix = '', skipDirName = '', filenameChanges = {}) => {
   const entries = await fs.readdir(dir, { withFileTypes: true });
   let fileCounter = 1;
-  let filenameChanges = {}; // Initialize an object to track filename changes
 
   for (const entry of entries) {
+    if (entry.name === skipDirName) continue; // Skip processing for specified directory name
+    
     const fullPath = join(dir, entry.name);
-    const relativePath = join(parentPath, entry.name); // Calculate relative path for use in markdown links
     if (entry.isDirectory()) {
-      // Recurse into subdirectories and accumulate filename changes
-      const subdirectoryChanges = await adjustFilenames(fullPath, `${prefix}${fileCounter.toString().padStart(2, '0')}-`, join(parentPath, `${prefix}${fileCounter.toString().padStart(2, '0')}-${entry.name}`));
-      filenameChanges = { ...filenameChanges, ...subdirectoryChanges };
+      // Recurse into subdirectories, carrying filenameChanges along
+      await adjustFilenames(fullPath, `${prefix}${fileCounter.toString().padStart(2, '0')}-`, skipDirName, filenameChanges);
     } else if (entry.isFile() && entry.name.endsWith('.md')) {
       // Process markdown files: remove page ID, prepend numbering
-      const newName = `${prefix}${fileCounter.toString().padStart(2, '0')}-${entry.name.replace(/-\w{32}\.md$/, '.md')}`;
-      const newFullPath = join(dir, newName);
-      const newRelativePath = join(parentPath, newName); // New relative path for markdown links
-      await fs.rename(fullPath, newFullPath);
-
-      // Map old relative path to new relative path
-      filenameChanges[relativePath] = newRelativePath;
+      const originalName = entry.name;
+      console.log(`${originalName}`)
+      const newName = `${prefix}${fileCounter.toString().padStart(2, '0')}-${entry.name.replace(/\s\w{32}\.md$/, '.md')}`;
+      await fs.rename(fullPath, join(dir, newName));
+      filenameChanges[join(dir, originalName)] = join(dir, newName); // Track the change
     }
     fileCounter++;
   }
 
-  return filenameChanges; // Return the mapping of changed filenames
+  return filenameChanges;
 };
-
 
 const updateInternalLinks = async (dir, mappings) => {
   const entries = await fs.readdir(dir, { withFileTypes: true });
@@ -54,10 +54,6 @@ const updateInternalLinks = async (dir, mappings) => {
     }
   }
 };
-
-
-
-
 // ---------------------------------------------------------------------------------
 
 // Class for tracking Notion export progress and status
@@ -281,8 +277,9 @@ const extractZip = async (
 
 // 
 const run = async (): Promise<void> => {
-  const workspaceDir = join(process.cwd(), "workspace");      // create workspace dir for export work
-  const workspaceZip = join(process.cwd(), "workspace.zip");  // create workspace.zip
+  let skipDirName = "Private & Shared"; // Define this globally or outside of your function
+  let workspaceDir = join(process.cwd(), "workspace");      // create workspace dir for export work
+  let workspaceZip = join(process.cwd(), "workspace.zip");  // create workspace.zip
 
   // init exportFromNotion with workspaceZip as the destination in markdown format
   await exportFromNotion(workspaceZip, "markdown");
@@ -297,7 +294,7 @@ const run = async (): Promise<void> => {
   // TODO - Obsidian community plugin code somehow integrated into the system?
 
   // Adjust filenames and capture the mapping of changes for updating internal links
-  const filenameChanges = await adjustFilenames(workspaceDir);
+  let filenameChanges = await adjustFilenames(workspaceDir);
   // Use filenameChanges to update internal markdown links
   await updateInternalLinks(workspaceDir, filenameChanges);
   
