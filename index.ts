@@ -1,13 +1,70 @@
 import "dotenv/config";
 import axios from "axios";
 import AdmZip from "adm-zip";
-import { createWriteStream, promises as fs } from "fs";
-import { join } from "path";
+import { createWriteStream, promises as fs, existsSync, Dirent } from "fs";
+import { join, parse, basename, relative } from "path";
+import dotenv from 'dotenv';
+import fse from 'fs-extra';
+import { Client } from '@notionhq/client';
+import { platform } from 'os';
+
+// Configure dotenv to load the .env file
+dotenv.config(); // Load environment variables from .env file 
+let TEST_CODE_MODE = process.env.TEST_CODE_MODE; // Assumes testing for code
+let TEST_NOTION_FILES = process.env.TEST_NOTION_FILES; // Assumes local testing with local notion export files
+let TEST_GIT_MODE = process.env.TEST_GIT_MODE // Assumes local testing of git functionality
 
 // FUNCTIONS FOR OBSIDIAN-RELATED PROCESSING
 
+// print directory tree for testing
+interface PrintDirTreeOptions {
+  prefix?: string;
+  level?: number;
+  currentLevel?: number;
+}
+
+async function printDirTree(dir: string, options: PrintDirTreeOptions = {}): Promise<void> {
+  const { prefix = '', level = Infinity, currentLevel = 0 } = options;
+
+  if (currentLevel > level) {
+      return;
+  }
+
+  const dirContents = await fs.readdir(dir, { withFileTypes: true });
+  const sortedContents = dirContents.sort((a, b) => a.name.localeCompare(b.name));
+
+  for (let i = 0; i < sortedContents.length; i++) {
+      const dirent = sortedContents[i];
+      const isLast = i === sortedContents.length - 1;
+      const connector = isLast ? '└── ' : '├── ';
+      const newPrefix = isLast ? prefix + '    ' : prefix + '│   ';
+
+      console.log(prefix + connector + dirent.name);
+      if (dirent.isDirectory()) {
+          await printDirTree(join(dir, dirent.name), {
+              prefix: newPrefix,
+              level,
+              currentLevel: currentLevel + 1,
+          });
+      }
+  }
+}
+
+// Check if a path is absolute
+// In Windows, an absolute path starts with a drive letter followed by ":\", in POSIX systems, it starts with "/"
+const isAbsolutePath = (path: string): boolean => platform() === 'win32' ? /^[a-zA-Z]:\\/.test(path) : path.startsWith('/');
+
+// Function to prepend the extended-length path prefix if on Windows and the path is not already extended
+const toExtendedLengthPath = (path: string): string => {
+    if (platform() === 'win32' && !path.startsWith('\\\\?\\')) {
+        // If the path is not absolute, make it absolute by joining it with process.cwd()
+        const absolutePath = isAbsolutePath(path) ? path : join(process.cwd(), path);
+        return '\\\\?\\' + absolutePath;
+    }
+    return path;
+};
 // recursively count both directories and files and return total count for help with progress bar printing over dirs and files
-const countItems = async (dir, skipDirName = '') => {
+const countItems = async (dir: string, skipDirName = '') => {
   let count = 0;
   const entries = await fs.readdir(dir, { withFileTypes: true });
   for (const entry of entries) {
@@ -22,23 +79,29 @@ const countItems = async (dir, skipDirName = '') => {
 };
 
 // escape inputted regular expression
-function escapeRegExp(string) {
+function escapeRegExp(string: string) {
   return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // $& means the whole matched string
 }
 
-// 
+// get Notion pages by manual menu order
+const getNotionPages = async () => {
+
+}
+
+// Fix filenames to follow naming taxonomy/syntax useful for Obsidian
 const adjustFilenames = async (
-  dir,
-  skipDirName = '',
-  filenameChanges = {},
-  levelCount = { counts: [0], currentLevel: 0 },
-  namingSeparator = '_',
-  parentPrefix = '',
-  progressTracker = null,
-  isRoot = true
+  dir: string = '',
+  skipDirName: string = '',
+  filenameChanges: Record<string, string> = {}, // Assuming filenameChanges is a map of string to string
+  levelCount: { counts: number[]; currentLevel: number } = { counts: [0], currentLevel: 0 },
+  namingSeparator: string = '_',
+  parentPrefix: string = '',
+  progressTracker: { processed: number; total: number; lastPrintedPercentage: number } | null = null,
+  isRoot: boolean = true
 ) => {
   if (isRoot && !progressTracker) {
     const totalItems = await countItems(dir, skipDirName);
+    console.log(`[x] [index.ts] [adjustFilenames] Total Items: ${totalItems}`)
     progressTracker = { processed: 0, total: totalItems, lastPrintedPercentage: -10 };
   }
 
@@ -77,23 +140,465 @@ const adjustFilenames = async (
       filenameChanges[fullPath] = newFilePath; // Track file renaming
       
       // Update and print progress
-      progressTracker.processed++;
-      const progressPercentage = Math.round((progressTracker.processed / progressTracker.total) * 100);
-      if (progressPercentage > progressTracker.lastPrintedPercentage) {
-        console.log(`Progress: ${progressTracker.processed}/${progressTracker.total} items processed (${progressPercentage}%)`);
-        progressTracker.lastPrintedPercentage = progressPercentage;
+      if (progressTracker) {
+        let progressPercentage = Math.round((progressTracker.processed*2 / progressTracker.total) * 100);
+        if (progressPercentage >= progressTracker.lastPrintedPercentage + 10) {
+          console.log(`[+] [index.ts] [adjustFilenames] Progress: ${progressTracker.processed*2}/${progressTracker.total} items processed (${progressPercentage}%)`);
+          progressTracker.lastPrintedPercentage = progressPercentage;
+        } else if (progressTracker.processed == progressTracker.total) {
+          console.log(`[+] [index.ts] [adjustFilenames] Progress: ${progressTracker.processed*2}/${progressTracker.total} items processed (${progressPercentage}%)`);
+        }
+        progressTracker.processed++;
       }
     }
   }
 
   if (isRoot) {
-    console.log("[+] Filename adjustment complete.");
+    console.log("[+] [index.ts] [adjustFilenames] Filename adjustment complete.");
   }
 
   return filenameChanges;
 };
 
-const updateInternalLinks = async (dir, filenameChanges) => {
+interface RenameMapping {
+  oldName: string;
+  newName: string;
+}
+
+async function removePageIdsFromNames(dir: string, depth: number = 0, verbose: boolean = false): Promise<RenameMapping[]> {
+  if (verbose) console.log(`Processing directory: ${dir} at depth: ${depth}`);
+  const entries = await fs.readdir(dir, { withFileTypes: true });
+
+  let nameCounts: Record<string, number> = {};
+  let oldToNewMappings: RenameMapping[] = [];
+  let directoryMappings: { oldPath: string; newPath: string; }[] = [];
+
+  for (const entry of entries) {
+      const fullPath = join(dir, entry.name);
+      const cleanedName = entry.name.replace(/(.*)(\s\w{32})(_[\w]{1,4})?\s?(\.[\w]{2,12})?$/, '$1$4');
+      let newName = cleanedName;
+      const pageId = entry.name.match(/\w{32}/)?.[0] || '';
+
+      if (entry.isDirectory() || !oldToNewMappings.some(m => m.oldName === entry.name)) {
+          if (nameCounts[cleanedName]) {
+              nameCounts[cleanedName] += 1;
+              const count = nameCounts[cleanedName];
+              newName += ` _(${count})_`;
+          } else {
+              nameCounts[cleanedName] = 1;
+          }
+
+          const newFullPath = join(dir, newName);
+          oldToNewMappings.push({ oldName: entry.name, newName: newName });
+
+          if (entry.isDirectory()) {
+              directoryMappings.push({ oldPath: fullPath, newPath: newFullPath });
+          }
+      }
+  }
+
+  // Perform renaming operations
+  for (const { oldName, newName } of oldToNewMappings) {
+      const oldFullPath = join(dir, oldName);
+      const newFullPath = join(dir, newName);
+      await fs.rename(oldFullPath, newFullPath);
+      if (verbose) console.log(`Renamed: ${oldName} to ${newName}`);
+  }
+
+  // Aggregate mappings from all levels
+  let allMappings = [...oldToNewMappings];
+
+  // Recurse into directories, ensuring to use updated paths if they were renamed
+  for (const { newPath } of directoryMappings) {
+      const subDirectoryMappings = await removePageIdsFromNames(newPath, depth + 1, verbose);
+      allMappings = allMappings.concat(subDirectoryMappings);
+  }
+
+  return allMappings;
+}
+
+// TODO fix removePageIdsFromNames functions - make sure they account for Notion Pages with same names but different Page IDs properly
+// below version works for now
+/*
+async function removePageIdsFromNames4(dir: string, depth: number = 0, verbose: boolean = false): Promise<RenameMapping[]> {
+  if (verbose) console.log(`Processing directory: ${dir} at depth: ${depth}`);
+  const entries = await fs.readdir(dir, { withFileTypes: true });
+
+  let nameCounts: Record<string, number> = {};
+  let oldToNewMappings: RenameMapping[] = [];
+  let directoryMappings: RenameMapping[] = [];
+
+  for (const entry of entries) {
+      const fullPath = join(dir, entry.name);
+      const cleanedName = entry.name.replace(/(.*)(\s\w{32})(_[\w]{1,4})?(\.[\w]{2,12})?$/, '$1$4');
+      let newName = cleanedName;
+      const pageId = entry.name.match(/\w{32}/)?.[0] || '';
+
+      if (entry.isDirectory() || !oldToNewMappings.some(m => m.oldPath === fullPath)) {
+          if (nameCounts[cleanedName]) {
+              nameCounts[cleanedName] += 1;
+              const count = nameCounts[cleanedName];
+              newName += ` _(${count})_`;
+          } else {
+              nameCounts[cleanedName] = 1;
+          }
+
+          const newFullPath = join(dir, newName);
+          oldToNewMappings.push({ oldPath: fullPath, newPath: newFullPath });
+
+          if (entry.isDirectory()) {
+              directoryMappings.push({ oldPath: fullPath, newPath: newFullPath });
+          }
+      }
+  }
+
+  // Perform renaming operations
+  for (const { oldPath, newPath } of oldToNewMappings) {
+      await fs.rename(oldPath, newPath);
+      if (verbose) console.log(`Renamed: ${basename(oldPath)} to ${basename(newPath)}`);
+  }
+
+  // Aggregate mappings from all levels
+  let allMappings = [...oldToNewMappings];
+
+  // Recurse into directories, ensuring to use updated paths if they were renamed
+  for (const { oldPath, newPath } of directoryMappings) {
+      const subDirectoryMappings = await removePageIdsFromNames(newPath, depth + 1, verbose);
+      allMappings = allMappings.concat(subDirectoryMappings);
+  }
+
+  return allMappings;
+}
+
+async function removePageIdsFromNames2(dir: string, depth: number = 0, verbose: boolean = false): Promise<RenameMapping[]> {
+  if (verbose) {console.log(`Processing directory: ${dir} at depth: ${depth}`);}
+  const entries = await fs.readdir(dir, { withFileTypes: true });
+
+  let nameCounts: Record<string, number> = {};
+  let oldToNewMappings: RenameMapping[] = [];
+  let directoryMappings: RenameMapping[] = [];
+
+  for (const entry of entries) {
+      const fullPath = join(dir, entry.name);
+      const cleanedName = entry.name.replace(/(.*)(\s\w{32})(\_[\w]{1,4})?(\.[\w]{2,12})?$/, '$1$4');
+      let newName = cleanedName;
+      const pageId = entry.name.match(/\w{32}/)?.[0] || '';
+      const identifier = `${cleanedName}|${pageId}`;
+
+      if (entry.isDirectory() || !oldToNewMappings.some(m => m.oldPath === fullPath)) {
+          if (nameCounts[cleanedName]) {
+              nameCounts[cleanedName] += 1;
+              const count = nameCounts[cleanedName];
+              newName += ` _(${count})_`;
+          } else {
+              nameCounts[cleanedName] = 1;
+          }
+
+          const newFullPath = join(dir, newName);
+          oldToNewMappings.push({ oldPath: fullPath, newPath: newFullPath });
+
+          if (entry.isDirectory()) {
+              directoryMappings.push({ oldPath: fullPath, newPath: newFullPath });
+          }
+      }
+  }
+
+  // Perform renaming operations
+  for (const { oldPath, newPath } of oldToNewMappings) {
+      await fs.rename(oldPath, newPath);
+      if (verbose) {console.log(`Renamed: ${basename(oldPath)} to ${basename(newPath)}`);}
+  }
+
+  // Recurse into directories, ensuring to use updated paths if they were renamed
+  for (const { oldPath, newPath } of directoryMappings) {
+      await removePageIdsFromNames(newPath, depth + 1);
+  }
+
+  return oldToNewMappings;
+}
+*/
+
+/*
+async function updateInternalLinks2(dir: string, mappings: RenameMapping[]): Promise<void> {
+  const entries = await fs.readdir(dir, { withFileTypes: true });
+
+  for (const entry of entries) {
+      const entryPath = join(dir, entry.name);
+
+      if (entry.isDirectory()) {
+          // Recursively update links in subdirectories
+          await updateInternalLinks(entryPath, mappings);
+      } else {
+          // Read the file content
+          let content = await fs.readFile(entryPath, 'utf8');
+
+          // Update all internal links based on mappings
+          for (const mapping of mappings) {
+              const oldLink = relative(dir, mapping.oldName).replace(/\\/g, '/');
+              const newLink = relative(dir, mapping.newName).replace(/\\/g, '/');
+
+              // Handle both non-escaped and escaped links
+              const patterns = [oldLink, encodeURIComponent(oldLink)].map(pattern =>
+                  new RegExp(pattern.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&'), 'g')
+              );
+
+              patterns.forEach(pattern => {
+                  content = content.replace(pattern, newLink);
+              });
+          }
+
+          // Write the updated content back to the file
+          await fs.writeFile(entryPath, content, 'utf8');
+      }
+  }
+}
+*/
+
+
+async function updateInternalLinks(dir: string, mappings: RenameMapping[]): Promise<void> {
+  const entries = await fs.readdir(dir, { withFileTypes: true });
+
+  // Create a mapping for basename replacements to simplify link updates
+  const basenameMappings: Record<string, string> = {};
+  mappings.forEach(({ oldName, newName }) => {
+      const oldBasename = parse(oldName).base;
+      const newBasename = parse(newName).base;
+      basenameMappings[oldBasename] = newBasename;
+  });
+
+  for (const entry of entries) {
+      const entryPath = join(dir, entry.name);
+
+      if (entry.isDirectory()) {
+          // Recursively update links in subdirectories
+          await updateInternalLinks(entryPath, mappings);
+      } else {
+          // Read the file content
+          let content = await fs.readFile(entryPath, 'utf8');
+
+          // Update all internal links based on basenameMappings
+          Object.entries(basenameMappings).forEach(([oldBasename, newBasename]) => {
+              // Regular expression to match the basename considering possible URL encoding
+              const pattern = new RegExp(escapeRegExp(oldBasename), 'g');
+              content = content.replace(pattern, newBasename);
+
+              // Consider URL encoded version
+              const encodedPattern = new RegExp(escapeRegExp(encodeURIComponent(oldBasename)), 'g');
+              content = content.replace(encodedPattern, encodeURIComponent(newBasename));
+          });
+
+          // Write the updated content back to the file
+          await fs.writeFile(entryPath, content, 'utf8');
+      }
+  }
+}
+
+
+/*
+async function removePageIdsFromNames_v3(dir: string): Promise<RenameMapping[]> {
+  const entries = await fs.readdir(dir, { withFileTypes: true });
+
+  let nameCounts: Record<string, number> = {};
+  let oldToNew: RenameMapping[] = [];
+  let processedDuplicates: Set<string> = new Set();
+
+  // Generate new file names and track them for renaming
+  for (const entry of entries) {
+      const fullPath = join(dir, entry.name);
+      const cleanedName = entry.name.replace(/(.*)(\s\w{32})(\.md)?$/, '$1$3');
+      let newName = cleanedName;
+      const pageId = entry.name.match(/\w{32}/)?.[0] || '';
+
+      const identifier = `${cleanedName}|${pageId}`;
+
+      if (!processedDuplicates.has(identifier)) {
+          if (nameCounts[cleanedName]) {
+              nameCounts[cleanedName] += 1;
+              const count = nameCounts[cleanedName];
+              newName = `${cleanedName} (${count})`;
+          } else {
+              nameCounts[cleanedName] = 1;
+          }
+
+          oldToNew.push({ oldPath: fullPath, newPath: join(dir, newName) });
+          processedDuplicates.add(identifier);
+      }
+  }
+
+  // Rename files and directories based on the generated mappings
+  for (const mapping of oldToNew) {
+      await fs.rename(mapping.oldPath, mapping.newPath);
+      console.log(`Renamed: ${basename(mapping.oldPath)} TO ${basename(mapping.newPath)}`);
+  }
+
+  // Recurse into subdirectories
+  for (const entry of entries.filter(e => e.isDirectory())) {
+      const subDirPath = join(dir, entry.name);
+      // Only recurse if the directory name itself was not modified, otherwise use the new path
+      const mapping = oldToNew.find(m => m.oldPath === subDirPath);
+      await removePageIdsFromNames(mapping ? mapping.newPath : subDirPath);
+  }
+
+  return oldToNew;
+}
+
+const removePageIdsFromNames_v1 = async (dir: string) => {
+  const entries = await fs.readdir(dir, { withFileTypes: true });
+
+  let nameCounts: Record<string, number> = {};
+  let pageIdMatcher: any = new Set();
+  let processedDuplicates: any = new Set();
+
+  // Mini function to check for matching cleanedName and pageId
+  const renameMatchInCurrentDir = async (cleanedName: string, pageId: string, fullPath: string, entries: any) => {
+    for (const entry of entries) {
+      const newFullPath = join(dir, cleanedName);
+      let entryCleanedName = entry.name.replace(/(.*)(\s)(\w{32})(\.md)?$/, '$1$4');
+      let entryPageId = entry.name.match(/(\w{32})(\.md)?$/)?.[0] || ''; // Extract the page ID including the extension if present
+
+      if (cleanedName === entryCleanedName && pageId === entryPageId) {
+        await fs.rename(fullPath, newFullPath);
+        return newFullPath;
+      }
+    }
+    return false; // No match found
+  };
+
+  for (const entry of entries) {
+      const fullPath = join(dir, entry.name);
+      // Construct the cleaned name by removing the 32-character UUID
+      let cleanedName = entry.name.replace(/(.*)(\s)(\w{32})(\.md)?$/, '$1$4');
+      let pageId = entry.name.match(/(\w{32})(\.md)?$/)?.[0] || ''; // Extract the page ID including the extension if present
+
+      // Check for duplicates and append a counter if necessary
+      if (cleanedName in nameCounts) {
+          if (pageIdMatcher.has(pageId)){
+            const count = ++nameCounts[cleanedName]; // Increment the count for this name
+            const extension = cleanedName.endsWith('.md') ? '.md' : '';
+            cleanedName = cleanedName.replace(/(\.md)?$/, ` __( )__${extension}`);
+          } else {
+            const count = ++nameCounts[cleanedName]; // Increment the count for this name
+            // go through files/folders in current dir to find case where pageIdMatcher.has(pageId)
+            const extension = cleanedName.endsWith('.md') ? '.md' : '';
+            cleanedName = cleanedName.replace(/(\.md)?$/, ` __(${count})__${extension}`);
+            await renameMatchInCurrentDir(cleanedName, pageId, fullPath, entries);
+            // remove matching cleanedName and matched pageId combination from "entries"
+            processedDuplicates
+          }
+          
+      } else {
+          nameCounts[cleanedName] = 1; // Initialize the count for this name
+      }
+
+      if (entry.name !== cleanedName) { // Check if the name needs to be changed
+          const newFullPath = join(dir, cleanedName);
+          await fs.rename(fullPath, newFullPath);
+          console.log(`[+] [${pageId}] Renamed: ${entry.name} TO ${cleanedName}`);
+
+          // If it's a directory, recurse into it
+          if (entry.isDirectory()) {
+              await removePageIdsFromNames(newFullPath);
+          }
+      } else if (entry.isDirectory()) {
+          // If the directory name doesn't need cleaning but still needs to be traversed
+          await removePageIdsFromNames(fullPath);
+      }
+  }
+};
+*/
+
+// TODO fix function to number files correctly without bugs
+/*
+const adjustNotionPages = async (
+  dir: string,
+  skipDirName: string = '',
+  filenameChanges: Record<string, string> = {}, // Assuming filenameChanges is a map of string to string,
+  namingSeparator: string = '_',
+  nameSyntaxSeparator: string = ' - ',
+  parentPrefix: string = '',
+  isRoot: boolean = true,
+  progressTracker: { processed: number; total: number; lastPrintedPercentage: number } | null = null
+) => {
+
+  if (isRoot && !progressTracker) {
+    // Optionally, count total items for progress indication or other logic
+    const totalItems = await countItems(dir, skipDirName);
+    console.log(`[+] [index.ts] [adjustNotionPages] Total Items: ${totalItems}`);
+    progressTracker = { processed: 0, total: totalItems, lastPrintedPercentage: -10 };
+  }
+  
+  // Get all of the entries for the folder, then alphabetically sort them
+  // TODO - add options for different sorting
+  const entries = await fs.readdir(dir, { withFileTypes: true });
+  console.log(entries);
+  const sortedEntries = entries.sort((a, b) => a.name.localeCompare(b.name));
+
+  const baseNameToItemNumber: Record<string, string> = {};
+
+  // Sequential numbering for items at the same level
+  
+  let currentItemNumber: number = 0;
+  for (let i = 0; i < sortedEntries.length; i++) {
+    
+    const entry: any = sortedEntries[i];  // get next entry based on sorted entries from current directory
+
+    let cleanedBaseName: string = '';
+    if (entry.isFile() && entry.name.endsWith('.md')) {
+      cleanedBaseName = `${parentPrefix}${entry.name.replace(/\s\w{32}\$/, '.md')}`;
+    } else if (entry.isDirectory()){
+      cleanedBaseName = `${parentPrefix}${entry.name.replace(/\s\w{32}$/, '')}`;
+    }
+    console.log(`[+] [index.ts] [adjustNotionPages] ${entry.name} TO ${cleanedBaseName}`)
+      
+    let itemNumber: string = '';
+    if (cleanedBaseName in baseNameToItemNumber) {
+      itemNumber = baseNameToItemNumber[cleanedBaseName];
+    } else {
+      currentItemNumber++;
+      itemNumber = (currentItemNumber).toString().padStart(2, '0'); // Ensure 2-digit numbering for new basenames
+      baseNameToItemNumber[cleanedBaseName] = itemNumber; 
+    }
+    
+    const newPrefix: string = isRoot ? itemNumber : `${parentPrefix}${namingSeparator}${itemNumber}`;
+
+    const fullPath = join(dir, entry.name);
+    const newName = entry.isDirectory() ? newPrefix + nameSyntaxSeparator + cleanedBaseName : newPrefix + ' - ' + entry.name;
+    filenameChanges[fullPath] = newName;      // Track file renaming
+    const newFullPath = join(dir, newName);
+    filenameChanges[fullPath] = newFullPath;  // Track directory renaming
+
+    // Rename operation
+    await fs.rename(fullPath, newFullPath);
+
+    // Recursive call for directories
+    if (entry.isDirectory()) {
+      await adjustNotionPages(newFullPath, skipDirName, filenameChanges, namingSeparator, nameSyntaxSeparator, newPrefix, false, progressTracker);
+    }
+  }
+
+  // Update and print progress
+  if (progressTracker) {
+    let progressPercentage = Math.round((progressTracker.processed*2 / progressTracker.total) * 100);
+    if (progressPercentage >= progressTracker.lastPrintedPercentage + 10) {
+      console.log(`[+] [index.ts] [adjustFilenames] Progress: ${progressTracker.processed*2}/${progressTracker.total} items processed (${progressPercentage}%)`);
+      progressTracker.lastPrintedPercentage = progressPercentage;
+    } else if (progressTracker.processed == progressTracker.total) {
+      console.log(`[+] [index.ts] [adjustFilenames] Progress: ${progressTracker.processed*2}/${progressTracker.total} items processed (${progressPercentage}%)`);
+    }
+    progressTracker.processed++;
+  }
+
+  if (isRoot) {
+    console.log("[+] [index.ts] [adjustNotionPages] Filename adjustment complete.");
+  }
+
+  return filenameChanges;
+};
+*/
+
+
+/*
+const updateInternalLinks_v1 = async (dir: string, filenameChanges: object) => {
   const entries = await fs.readdir(dir, { withFileTypes: true });
 
   for (const entry of entries) {
@@ -117,6 +622,8 @@ const updateInternalLinks = async (dir, filenameChanges) => {
     }
   }
 };
+*/
+
 // ---------------------------------------------------------------------------------
 
 // Class for tracking Notion export progress and status
@@ -130,7 +637,7 @@ type NotionTask = {
   error?: string;
 };
 
-// Obtain GitHub Environment Variables
+// Obtain GitHub Environment Variables - assumes running with GitHub actions
 const { NOTION_TOKEN, NOTION_SPACE_ID, NOTION_USER_ID } = process.env;
 if (!NOTION_TOKEN || !NOTION_SPACE_ID || !NOTION_USER_ID) {
   throw new Error(
@@ -192,7 +699,7 @@ const exportFromNotion = async (
                                                                                 //taskId
 
   // Log export taskId generated from enqueueTask request for Notion API
-  console.log(`[+] Started export as task [${taskId}].`);
+  console.log(`[+] [index.ts] Started export as task [${taskId}].`);
 
   
   let exportURL: string;                        //variable for storing URL to grab files from during request loop
@@ -215,7 +722,7 @@ const exportFromNotion = async (
     if (!task) throw new Error(`Task [${taskId}] not found.`);
     if (task.error) throw new Error(`Export failed with reason: ${task.error}`);
 
-    console.log(`[+] Exported ${task.status.pagesExported} pages.`);
+    console.log(`[+] [index.ts] Exported ${task.status.pagesExported} pages/items.`);
 
     /*
       once all tasks have finished -> task.state==="success", then grab file export URL and token
@@ -229,9 +736,9 @@ const exportFromNotion = async (
       );
       console.log(`fileTokenCookie: ${fileTokenCookie}`);
       if (!fileTokenCookie) {
-        throw new Error("[x] Task finished but file_token cookie not found.");
+        throw new Error("[x] [index.ts] Task finished but file_token cookie not found.");
       }
-      console.log(`[+] Export finished.`);
+      console.log(`[+] [index.ts] Export finished.`);
       break;
     }
   }
@@ -246,7 +753,7 @@ const exportFromNotion = async (
 
   // Log the download size information for the ZIP file
   const size = response.headers["content-length"];
-  console.log(`Downloading ${round(size / 1000 / 1000)}mb...`);
+  console.log(`[+] [index.ts] Downloading ${round(size / 1000 / 1000)}mb...`);
   
   // createWriteStream - https://www.geeksforgeeks.org/node-js-fs-createwritestream-method/
   // Use axios client variable to stream the response of the exported file from Notion's export URL with
@@ -342,30 +849,147 @@ const extractZip = async (
 
 // 
 const run = async (): Promise<void> => {
-  let skipDirName = "Private & Shared"; // Define this globally or outside of your function
+  // TODO fix taxonomy function adjustNotionPages to work properly and use below variable
+  let skipDirName = "Private & Shared"; // Define this globally or outside of your function 
   let workspaceDir = join(process.cwd(), "workspace");      // create workspace dir for export work
   let workspaceZip = join(process.cwd(), "workspace.zip");  // create workspace.zip
+  console.log('[+] [index.ts] Created workspaceDir and workspaceZip...')
 
-  // init exportFromNotion with workspaceZip as the destination in markdown format
-  await exportFromNotion(workspaceZip, "markdown");
-  await fs.rm(workspaceDir, { recursive: true, force: true });  // remove old or existing workspace directory
-  await fs.mkdir(workspaceDir, { recursive: true });            // create workspace directory
-  await extractZip(workspaceZip, workspaceDir);                 // extract zip file to workspace directory
+  if (TEST_CODE_MODE=="true" && TEST_NOTION_FILES) { // if locally testing code
+    console.log('[+] [index.ts] Running in local testing mode (TEST_CODE_MODE env set)')
+
+    let testSourceDir = TEST_NOTION_FILES // Define the Notion files source directory for testing
+    // Delete workspaceDir if it already exists - not needed with fse.copySync using overwrite option??
+    if (existsSync(workspaceDir)) {
+      try {
+        await fs.rm(`${workspaceDir}/.`, { recursive: true}); // synchronously remove all the files before moving on
+        console.log(`[+] [index.ts] Old workspaceDir removed or nonexistent...`)
+      } catch (err) {
+        console.error(`[+] [index.ts] [Error removing workspaceDir] ${err}`)
+      }
+    } else {
+      console.log('[+] [index.ts] No old workspaceDir found...')
+    }
+    
+    //Copy Notion test files to the workspace directory (kind of link temp place for testing files)
+    try {
+      console.log('[+] [index.ts] Copying Notion Export test files to workspaceDir...')
+      fse.copySync(
+        testSourceDir, 
+        workspaceDir, 
+        { 
+          overwrite: true, 
+          errorOnExist: true, 
+          preserveTimestamps: true
+        }
+      )
+      console.log(`[+] [index.ts] Files copied from ${testSourceDir} to workSpaceDir...`)
+    } catch (err) {
+      console.error(`[x] [index.ts] [Error copying test files] ${err}`)
+    }
+    
+    // Transform filenames and internal attachment links for Obsidian
+    let mappings: any;
+    try {
+      // Adjust filenames and capture the mapping of changes for updating internal links
+
+      // TODO fix below functions and refactor run to use them ideally
+      // filenameChanges = await adjustFilenames(workspaceDir);
+      // filenameChanges = await adjustNotionPages(workspaceDir, skipDirName='Private & Shared');
+
+      console.log(`[+] [index.ts] Removing Page Ids from file and dir names...`)
+      mappings = await removePageIdsFromNames(workspaceDir);
+      
+    } catch (err) {
+      console.error(`[x] [index.ts] [removePageIdsFromNames] ${err}`)
+    }
+
+    // TODO add verbose option for printing directory into page
+    //fs.readdir(workspaceDir).then(console.log).catch(console.error);
+    //await printDirTree(workspaceDir, { level: 2 }).catch(console.error);
+    
+    try {
+      // Use mappings to update internal markdown links
+      console.log(`[+] [index.ts] Updating internal links...`)
+      await updateInternalLinks(workspaceDir, mappings);
+    } catch (err) {
+      console.error(`[x] [index.ts] [updateInternalLinks] ${err}`)
+    }
+    
+  } else if (TEST_CODE_MODE!="true" && TEST_GIT_MODE!="true") { // if normally running in Github actions with backup.yml
+
+    console.log('[+] [index.ts] Running default and exporting from Notion (usually via GitHub actions)...')
+
+    // Delete workspaceDir if it already exists - not needed with fse.copySync using overwrite option??
+    if (existsSync(workspaceDir)) {
+      try {
+        await fs.rm(`${workspaceDir}/.`, { recursive: true}); // synchronously remove all the files before moving on
+        console.log(`[+] [index.ts] Old workspaceDir removed or nonexistent...`)
+      } catch (err) {
+        console.error(`[+] [index.ts] [Error removing workspaceDir] ${err}`)
+      }
+    } else {
+      console.log('[+] [index.ts] No old workspaceDir found...')
+    }
+
+    // init exportFromNotion with workspaceZip as the destination in markdown format
+    await exportFromNotion(workspaceZip, "markdown");
+    try {
+      await fs.rm(workspaceDir, { recursive: true});  // remove old or existing workspace directory
+    } catch (err) {
+      console.log("[+] [index.ts] Couldn't remove workspaceDir - might have already been deleted...")
+    }
+    await fs.mkdir(workspaceDir, { recursive: true });            // create workspace directory
+    await extractZip(workspaceZip, workspaceDir);                 // extract zip file to workspace directory
+    await fs.unlink(workspaceZip);    // close fs link for file
+
+    console.log("[+] [index.ts] Export downloaded and unzipped.");
+
+    // Transform filenames and internal attachment links for Obsidian
+    let mappings: any;
+    try {
+      // Adjust filenames and capture the mapping of changes for updating internal links
+
+      // TODO fix below functions and refactor run to use them ideally
+      // filenameChanges = await adjustFilenames(workspaceDir);
+      // filenameChanges = await adjustNotionPages(workspaceDir, skipDirName='Private & Shared');
+
+      console.log(`[+] [index.ts] Removing Page Ids from file and dir names...`)
+      mappings = await removePageIdsFromNames(workspaceDir);
+      
+    } catch (err) {
+      console.error(`[x] [index.ts] [removePageIdsFromNames] ${err}`)
+    }
+
+    // TODO add verbose option for printing directory into page
+    //fs.readdir(workspaceDir).then(console.log).catch(console.error);
+    //await printDirTree(workspaceDir, { level: 2 }).catch(console.error);
+    
+    try {
+      // Use mappings to update internal markdown links
+      console.log(`[+] [index.ts] Updating internal links...`)
+      await updateInternalLinks(workspaceDir, mappings);
+    } catch (err) {
+      console.error(`[x] [index.ts] [updateInternalLinks] ${err}`)
+    }
+
+    console.log("[+] [index.ts] ✅ Finished preparing Notion Export...");
+
+  } else if (TEST_CODE_MODE!="true" && TEST_GIT_MODE=="true" && TEST_NOTION_FILES) { // if testing git functionality only locally
+    console.log("[+] [index.ts] Testing git functionality locally...please make 'TEST_GIT_MODE' true next time for this")
+    console.log("[+] [index.ts] Exiting index.ts code...")
+    return
+  } else {
+    console.error('[x] Incorrect combination of environment variables set globally or locally from .env file...')
+  }
 
   // FUTURE TODOS:
   // TODO - option to fix long file names and paths for Windows issues ... ugh
   // TODO - option to automatically reformat markdown files in a certain way
   // TODO - option to prepend numbering or organizational string to the front of filename or directory
   // TODO - Obsidian community plugin code somehow integrated into the system?
-
-  // Adjust filenames and capture the mapping of changes for updating internal links
-  let filenameChanges = await adjustFilenames(workspaceDir);
-  // Use filenameChanges to update internal markdown links
-  await updateInternalLinks(workspaceDir, filenameChanges);
-  
-  await fs.unlink(workspaceZip);    // close fs link for file
-
-  console.log("✅ Export downloaded and unzipped.");
+  // TODO - use web scraper in GitHub to get page order from Notion or wait for notion API to fix it
+      // WORKAROUND - rename pages with numbers at the front
 };
 
 run();

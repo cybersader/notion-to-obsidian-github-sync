@@ -10,13 +10,17 @@
   "author": "Richard Keil",
   "license": "MIT",
   "dependencies": {
+    "@notionhq/client": "^2.2.14",
     "adm-zip": "^0.5.10",
     "axios": "^0.21",
-    "dotenv": "^16.3.1"
+    "dotenv": "^16.4.5",
+    "fs-extra": "^11.2.0",
+    "querystring": "^0.2.1"
   },
   "devDependencies": {
     "@tsconfig/node20": "^20.1.2",
     "@types/adm-zip": "^0.5.3",
+    "@types/fs-extra": "^11.0.4",
     "ts-node": "^10.9.1",
     "typescript": "^5.2.2"
   }
