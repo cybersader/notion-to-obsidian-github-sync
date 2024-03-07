@@ -24,3 +24,19 @@ The tool separates the logic for running the export and the actual workspace dat
 ## How it works
 
 This repo contains a GitHub workflow that runs every day and for every push to this repo. The workflow will execute the script which makes an export request to Notion, waits for it to finish and downloads the workspace content to a temporary directory. The workflow will then commit this directory to the repository configured in the repo secrets.
+
+# Contributions
+## Todos -- Contributors?? 😄
+- [ ] Fix issues with binary files
+- [ ] More options and easier configuration
+  - [ ] Choose whether to do renaming or not
+  - [ ] Other integration options
+- [ ] Taxonomy generation fixes (adjustNotionPages function)
+- [ ] Work with Notion HTML-based export rather than markdown and CSVs
+- [ ] Utilize importer plugin from Obsidian plugins somehow
+- [ ] Scripts for local Linux testing
+- [ ] GitHub action from Obsidian-to-notion side that runs Notion-API based workflow to sync in the other direction
+  - [ ] Mapping file for Page ID to page to help with Obsidian-to-Notion pushes   
+
+## How to locally test software (Windows)
+TODO

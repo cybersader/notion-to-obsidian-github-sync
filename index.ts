@@ -2,7 +2,7 @@ import "dotenv/config";
 import axios from "axios";
 import AdmZip from "adm-zip";
 import { createWriteStream, promises as fs, existsSync, Dirent } from "fs";
-import { join, parse, basename, relative } from "path";
+import { join, parse, basename, relative, extname } from "path";
 import dotenv from 'dotenv';
 import fse from 'fs-extra';
 import { Client } from '@notionhq/client';
@@ -175,7 +175,7 @@ async function removePageIdsFromNames(dir: string, depth: number = 0, verbose: b
 
   for (const entry of entries) {
       const fullPath = join(dir, entry.name);
-      const cleanedName = entry.name.replace(/(.*)(\s\w{32})(_[\w]{1,4})?\s?(\.[\w]{2,12})?$/, '$1$4');
+      const cleanedName = entry.name.replace(/^(.*?)(?:\s+([a-f0-9]{32}))?\s*(?:_(?:\w+))?\s*(\.[\w]{2,12})?$/, '$1$3');
       let newName = cleanedName;
       const pageId = entry.name.match(/\w{32}/)?.[0] || '';
 
@@ -354,8 +354,58 @@ async function updateInternalLinks2(dir: string, mappings: RenameMapping[]): Pro
 }
 */
 
+// List of common binary file extensions
+const binaryExtensions = new Set([
+  '.png', '.jpg', '.jpeg', '.gif', '.bmp',
+  '.pdf', '.doc', '.docx', '.xls', '.xlsx',
+  '.ppt', '.pptx', '.exe', '.dll', '.bin',
+  '.zip', '.rar', '.iso', '.tar', '.gz',
+  '.mp3', '.wav', '.mp4', '.mov', '.avi'
+]);
 
 async function updateInternalLinks(dir: string, mappings: RenameMapping[]): Promise<void> {
+  const entries = await fs.readdir(dir, { withFileTypes: true });
+
+  // Create a mapping for basename replacements to simplify link updates
+  const basenameMappings: Record<string, string> = mappings.reduce((acc, { oldName, newName }) => {
+    const oldBasename = parse(oldName).base;
+    const newBasename = parse(newName).base;
+    acc[oldBasename] = newBasename;
+    return acc;
+  }, {} as Record<string, string>);
+
+  for (const entry of entries) {
+    const entryPath = join(dir, entry.name);
+
+    if (entry.isDirectory()) {
+      // Recursively update links in subdirectories
+      await updateInternalLinks(entryPath, mappings);
+    } else {
+      // Skip binary files based on file extension
+      const extension = extname(entry.name).toLowerCase();
+      if (binaryExtensions.has(extension)) {
+        console.log(`[+] [index.ts] [updateInternalLinks] Skipping binary file: ${entryPath}`);
+        continue; // Skip this iteration and move to the next file
+      }
+
+      // Process non-binary files
+      let content = await fs.readFile(entryPath, 'utf8');
+      Object.entries(basenameMappings).forEach(([oldBasename, newBasename]) => {
+        const pattern = new RegExp(escapeRegExp(oldBasename), 'g');
+        content = content.replace(pattern, newBasename);
+
+        const encodedPattern = new RegExp(escapeRegExp(encodeURIComponent(oldBasename)), 'g');
+        content = content.replace(encodedPattern, encodeURIComponent(newBasename));
+      });
+
+      // Write the updated content back to the file
+      await fs.writeFile(entryPath, content, 'utf8');
+    }
+  }
+}
+
+/*
+async function updateInternalLinks_v2(dir: string, mappings: RenameMapping[]): Promise<void> {
   const entries = await fs.readdir(dir, { withFileTypes: true });
 
   // Create a mapping for basename replacements to simplify link updates
@@ -392,7 +442,7 @@ async function updateInternalLinks(dir: string, mappings: RenameMapping[]): Prom
       }
   }
 }
-
+*/
 
 /*
 async function removePageIdsFromNames_v3(dir: string): Promise<RenameMapping[]> {
