@@ -49,7 +49,18 @@ jobs:
           else
             echo "Using APPEND_MODE..."
           fi
-          
+
+          echo "Current directory:"
+          pwd
+          if [ -d "backup-repo" ]; then
+            echo "Listing contents of backup-repo directory:"
+            ls -alR backup-repo/
+          else
+            echo "backup-repo directory does not exist in the current directory."
+            echo "Attempting to list contents of the root directory:"
+            ls -al
+          fi
+
           echo "Listing contents of backup-repo directory:"
           ls -alR backup-repo/
           echo "Showing .gitignore contents if exists in backup-repo:"
