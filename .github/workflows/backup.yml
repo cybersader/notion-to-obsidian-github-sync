@@ -32,8 +32,7 @@ jobs:
           repository: ${{ secrets.REPO_USERNAME }}/${{ secrets.REPO_NAME }}
           token: ${{ secrets.REPO_PERSONAL_ACCESS_TOKEN }}
           path: "backup-repo"
-
-      - name: Conditionally handle files based on APPEND_MODE
+      - name: Commit changes to backup repo
         env:
           REPO_EMAIL: ${{ secrets.REPO_EMAIL }}
           REPO_USERNAME: ${{ secrets.REPO_USERNAME }}
@@ -41,23 +40,20 @@ jobs:
         run: |
           cd backup-repo
           
-          # Complete replacement if APPEND_MODE is false or not given
+          # Check APPEND_MODE; perform complete replacement if false or not given
           if [ "$APPEND_MODE" != "true" ]; then
-            echo "Performing complete replacement..."
-            find . -type f ! -name 'index.html' ! -name 'readme.md' -delete
-            find . -type d ! -path . ! -path './.github*' -exec rm -rf {} +
-          else
-            echo "Appending files..."
+            # Silence the find commands
+            find . -type f ! -name 'index.html' ! -name 'readme.md' ! -name '.git*' -exec rm -f {} + 2>/dev/null
+            find . -type d ! -path . ! -path './.github*' ! -path './.git*' -exec rm -rf {} + 2>/dev/null
           fi
-          
-          # Use rsync to copy new files, always excluding certain files
+
+          # Use rsync to copy new files, allowing exclusion as needed
           rsync -av --exclude='.github' --exclude='index.html' --exclude='readme.md' ../workspace/ ./
           
           git config --local user.email "${REPO_EMAIL}"
           git config --local user.name "${REPO_USERNAME}"
           git add .
           if [ -z "$(git status --porcelain)" ]; then
-            echo "No changes to commit."
             exit 0
           fi
           git commit -m "Automated Notion workspace backup"
