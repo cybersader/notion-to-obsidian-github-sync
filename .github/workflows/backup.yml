@@ -44,6 +44,9 @@ jobs:
           REPO_USERNAME: ${{ secrets.REPO_USERNAME }}
           APPEND_MODE: ${{ secrets.APPEND_MODE }}
         run: |
+          echo "Listing contents and pwd of current repo (AFTER COPY)"
+          pwd
+          ls -al
           cd backup-repo
           
           # ----- CURRENT DIR - backup-repo -------
@@ -79,7 +82,7 @@ jobs:
           git status --ignored
           git check-ignore -v .
 
-          git add .
+          git add . -f
           if [ -z "$(git status --porcelain)" ]; then
             exit 0
           fi
