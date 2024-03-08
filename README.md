@@ -1,7 +1,7 @@
 # Notion-to-obsidian
 - This is a fork of the notion-guardian repo with some extended functionality for automating structuring for an obsidian vault. This can be used with obsidian-git and/or git+obsidian use to sync Notion to GitHub.  
 
-A tool that automatically backups your [Notion](notion.so) workspace and commits changes to another repository.
+A tool that automatically backups your [Notion](notion.so) workspace and commits changes to another repository private or public for the purpose of putting Notion into an Obsidian vault.
 
 Notion Guardian offers a quick way to setup a secure backup of your data in a private repository — allowing you to track how your notes change over time and to know that your data is safe.
 
