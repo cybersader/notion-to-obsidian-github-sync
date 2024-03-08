@@ -86,6 +86,7 @@ jobs:
 
           echo "Ignored files:"
           git status --ignored
+          git check-ignore -v .
 
           git add .
           if [ -z "$(git status --porcelain)" ]; then
