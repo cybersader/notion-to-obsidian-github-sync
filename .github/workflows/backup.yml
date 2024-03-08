@@ -49,6 +49,14 @@ jobs:
           else
             echo "Using APPEND_MODE..."
           fi
+          
+          echo "Listing contents of backup-repo directory:"
+          ls -alR backup-repo/
+          echo "Showing .gitignore contents if exists in backup-repo:"
+          [ -f backup-repo/.gitignore ] && cat backup-repo/.gitignore || echo ".gitignore does not exist in backup-repo"
+          echo "Showing ignored files in backup-repo:"
+          cd backup-repo
+          git status --ignored
 
           # Use rsync to copy new files, allowing exclusion as needed
           #rsync -av --exclude='.github' --exclude='index.html' --exclude='readme.md' ../workspace/ ./
