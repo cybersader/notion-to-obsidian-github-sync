@@ -82,6 +82,7 @@ jobs:
           git status --ignored
           git check-ignore -v .
 
+          # ----- CURRENT DIR - backup-repo -------
           git add . -f
           if [ -z "$(git status --porcelain)" ]; then
             exit 0

@@ -384,7 +384,7 @@ async function updateInternalLinks(dir: string, mappings: RenameMapping[]): Prom
       // Skip binary files based on file extension
       const extension = extname(entry.name).toLowerCase();
       if (binaryExtensions.has(extension)) {
-        console.log(`[+] [index.ts] [updateInternalLinks] Skipping binary file: ${entryPath}`);
+        //console.log(`[+] [index.ts] [updateInternalLinks] Skipping binary file: ${entryPath}`);
         continue; // Skip this iteration and move to the next file
       }
 
