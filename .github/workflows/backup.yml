@@ -56,23 +56,16 @@ jobs:
             echo "Listing contents of backup-repo directory:"
             ls -alR backup-repo/
           else
-            echo "backup-repo directory does not exist in the current directory."
-            echo "Attempting to list contents of the root directory:"
+            echo "Listing contents of the current directory:"
             ls -al
           fi
-
-          echo "Listing contents of backup-repo directory:"
-          ls -alR backup-repo/
-          echo "Showing .gitignore contents if exists in backup-repo:"
-          [ -f backup-repo/.gitignore ] && cat backup-repo/.gitignore || echo ".gitignore does not exist in backup-repo"
-          echo "Showing ignored files in backup-repo:"
-          cd backup-repo
-          git status --ignored
 
           # Use rsync to copy new files, allowing exclusion as needed
           #rsync -av --exclude='.github' --exclude='index.html' --exclude='readme.md' ../workspace/ ./
           echo "Copying from temporary workspaceDir to backup-repo folder..."
           cp -a ../workspace/ ./
+          echo "Listing contents of the backup-repo"
+          ls -al
 
           git config --local user.email "${REPO_EMAIL}"
           git config --local user.name "${REPO_USERNAME}"
