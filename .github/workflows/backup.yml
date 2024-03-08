@@ -38,8 +38,12 @@ jobs:
           if [ -z "$GLOBAL_GITIGNORE" ]; then
             echo "No global .gitignore file set."
           else
-            echo "Global .gitignore file located at: $GLOBAL_GITIGNORE"
-            cat "$GLOBAL_GITIGNORE"
+            if [ -f "$GLOBAL_GITIGNORE" ]; then
+              echo "Global .gitignore file located at: $GLOBAL_GITIGNORE"
+              cat "$GLOBAL_GITIGNORE"
+            else
+              echo "Global .gitignore file is set to $GLOBAL_GITIGNORE, but the file does not exist or cannot be read."
+            fi
           fi
       - name: List .gitignore in the repository and .git/info/exclude
         run: |
