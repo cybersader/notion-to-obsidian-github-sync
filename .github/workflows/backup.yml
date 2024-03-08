@@ -32,6 +32,21 @@ jobs:
           repository: ${{ secrets.REPO_USERNAME }}/${{ secrets.REPO_NAME }}
           token: ${{ secrets.REPO_PERSONAL_ACCESS_TOKEN }}
           path: "backup-repo"
+      - name: Check for global .gitignore and list its contents
+        run: |
+          GLOBAL_GITIGNORE=$(git config --global core.excludesfile)
+          if [ -z "$GLOBAL_GITIGNORE" ]; then
+            echo "No global .gitignore file set."
+          else
+            echo "Global .gitignore file located at: $GLOBAL_GITIGNORE"
+            cat "$GLOBAL_GITIGNORE"
+          fi
+      - name: List .gitignore in the repository and .git/info/exclude
+        run: |
+          echo "Listing .gitignore files in repository:"
+          find . -name .gitignore -exec echo {} \; -exec cat {} \;
+          echo "Contents of .git/info/exclude:"
+          cat .git/info/exclude || echo ".git/info/exclude does not exist."
       - name: Commit changes to backup repo
         env:
           REPO_EMAIL: ${{ secrets.REPO_EMAIL }}
@@ -44,6 +59,8 @@ jobs:
 
           # Check APPEND_MODE; perform complete replacement if false or not given
           if [ "$APPEND_MODE" != "true" ]; then
+            echo "Listing contents of checked out backup-repo directory (BEFORE DELETION):"
+            ls -al
             echo "Performing complete replacement..."
             # Delete files for complete replacement mode
             find . -type f ! -name 'index.html' ! -name 'readme.md' ! -name '.git*' -exec rm -f {} + 2>/dev/null
@@ -66,6 +83,10 @@ jobs:
 
           git config --local user.email "${REPO_EMAIL}"
           git config --local user.name "${REPO_USERNAME}"
+
+          echo "Ignored files:"
+          git status --ignored
+
           git add .
           if [ -z "$(git status --porcelain)" ]; then
             exit 0
