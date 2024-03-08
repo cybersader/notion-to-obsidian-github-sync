@@ -32,19 +32,6 @@ jobs:
           repository: ${{ secrets.REPO_USERNAME }}/${{ secrets.REPO_NAME }}
           token: ${{ secrets.REPO_PERSONAL_ACCESS_TOKEN }}
           path: "backup-repo"
-      - name: Check for global .gitignore and list its contents
-        run: |
-          GLOBAL_GITIGNORE=$(git config --global core.excludesfile)
-          if [ -z "$GLOBAL_GITIGNORE" ]; then
-            echo "No global .gitignore file set."
-          else
-            if [ -f "$GLOBAL_GITIGNORE" ]; then
-              echo "Global .gitignore file located at: $GLOBAL_GITIGNORE"
-              cat "$GLOBAL_GITIGNORE"
-            else
-              echo "Global .gitignore file is set to $GLOBAL_GITIGNORE, but the file does not exist or cannot be read."
-            fi
-          fi
       - name: List .gitignore in the repository and .git/info/exclude
         run: |
           echo "Listing .gitignore files in repository:"
