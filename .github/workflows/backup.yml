@@ -62,15 +62,10 @@ jobs:
 
           # ----- CURRENT DIR - backup-repo -------
           
-          cd ..
-
-          # ----- CURRENT DIR - root -------
-          
           # copy new files, allowing exclusion as needed
           #rsync -av --exclude='.github' --exclude='index.html' --exclude='readme.md' ../workspace/ ./
           echo "Copying from temporary workspaceDir to backup-repo folder..."
-          cp -a /workspace/. backup-repo/
-
+          cp -a ../workspace/. .
           echo "Listing contents of the backup-repo (AFTER COPY)"
           ls -al
 
