@@ -61,14 +61,20 @@ jobs:
           ls -al
 
           # ----- CURRENT DIR - backup-repo -------
+          
+          cd ..
 
+          # ----- CURRENT DIR - root -------
+          
           # copy new files, allowing exclusion as needed
           #rsync -av --exclude='.github' --exclude='index.html' --exclude='readme.md' ../workspace/ ./
           echo "Copying from temporary workspaceDir to backup-repo folder..."
-          cp -a ../workspace/. .
+          cp -a /workspace/. backup-repo/
+
           echo "Listing contents of the backup-repo (AFTER COPY)"
           ls -al
 
+          cd backup-repo
           git config --local user.email "${REPO_EMAIL}"
           git config --local user.name "${REPO_USERNAME}"
 
