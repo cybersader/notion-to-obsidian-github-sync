@@ -31,7 +31,7 @@ jobs:
         with:
           repository: ${{ secrets.REPO_USERNAME }}/${{ secrets.REPO_NAME }}
           token: ${{ secrets.REPO_PERSONAL_ACCESS_TOKEN }}
-          path: "../backup-repo"
+          path: "backup-repo"
       - name: Commit changes to backup repo
         env:
           REPO_EMAIL: ${{ secrets.REPO_EMAIL }}
@@ -41,7 +41,7 @@ jobs:
           echo "Listing contents and pwd of current repo (AFTER COPY)"
           pwd
           ls -al
-          cd ../backup-repo
+          cd backup-repo
           
           # ----- CURRENT DIR - backup-repo -------
 
