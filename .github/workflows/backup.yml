@@ -38,49 +38,23 @@ jobs:
           REPO_USERNAME: ${{ secrets.REPO_USERNAME }}
           APPEND_MODE: ${{ secrets.APPEND_MODE }}
         run: |
-          echo "Listing contents and pwd of current repo (AFTER COPY)"
-          pwd
-          ls -al
+          # ----- CURRENT DIR - root/repo --------
+          echo "Copying files with Rsync"
+          rsync -a --delete --exclude='.git/' --exclude='index.html' --exclude='README.md' --exclude='.github/' ./workspace/ ./backup-repo/
+
           cd backup-repo
-          
-          # ----- CURRENT DIR - backup-repo -------
 
-          # Check APPEND_MODE; perform complete replacement if false or not given
-          if [ "$APPEND_MODE" != "true" ]; then
-            echo "Listing contents of checked out backup-repo directory (BEFORE DELETION):"
-            ls -al
-            echo "Performing complete replacement..."
-            # Delete files for complete replacement mode
-            find . -type f ! -name 'index.html' ! -name 'readme.md' ! -name '.git*' -exec rm -f {} + 2>/dev/null
-            find . -type d ! -path . ! -path './.github*' ! -path './.git*' -exec rm -rf {} + 2>/dev/null
-          else
-            echo "Using APPEND_MODE..."
-          fi
-
-          echo "Listing contents of backup-repo directory (BEFORE COPY):"
-          ls -al
-
-          # ----- CURRENT DIR - backup-repo -------
-          
-          # copy new files, allowing exclusion as needed
-          #rsync -av --exclude='.github' --exclude='index.html' --exclude='readme.md' ../workspace/ ./
-          echo "Copying from temporary workspaceDir to backup-repo folder..."
-          cp -a ../workspace/. .
+          # ----- CURRENT DIR - backup-repo --------
           echo "Listing contents of the backup-repo (AFTER COPY)"
           ls -al
-
-          cd backup-repo
           git config --local user.email "${REPO_EMAIL}"
           git config --local user.name "${REPO_USERNAME}"
 
-          echo "Ignored files:"
-          git status --ignored
-          git check-ignore -v .
-
-          # ----- CURRENT DIR - backup-repo -------
-          git add . -f
-          if [ -z "$(git status --porcelain)" ]; then
-            exit 0
-          fi
-          git commit -m "Automated Notion workspace backup"
+          echo "Git status before add:"
+          git status --porcelain
+          git add .
+          echo "Git status after add:"
+          git status --porcelain
+          git commit -m "Automated Notion workspace backup" --quiet
+          git status
           git push --quiet
