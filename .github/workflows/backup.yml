@@ -31,13 +31,7 @@ jobs:
         with:
           repository: ${{ secrets.REPO_USERNAME }}/${{ secrets.REPO_NAME }}
           token: ${{ secrets.REPO_PERSONAL_ACCESS_TOKEN }}
-          path: "backup-repo"
-      - name: List .gitignore in the repository and .git/info/exclude
-        run: |
-          echo "Listing .gitignore files in repository:"
-          find . -name .gitignore -exec echo {} \; -exec cat {} \;
-          echo "Contents of .git/info/exclude:"
-          cat .git/info/exclude || echo ".git/info/exclude does not exist."
+          path: "../backup-repo"
       - name: Commit changes to backup repo
         env:
           REPO_EMAIL: ${{ secrets.REPO_EMAIL }}
@@ -47,7 +41,7 @@ jobs:
           echo "Listing contents and pwd of current repo (AFTER COPY)"
           pwd
           ls -al
-          cd backup-repo
+          cd ../backup-repo
           
           # ----- CURRENT DIR - backup-repo -------
 
@@ -88,4 +82,4 @@ jobs:
             exit 0
           fi
           git commit -m "Automated Notion workspace backup"
-          git push
+          git push --quiet
