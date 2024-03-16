@@ -771,7 +771,12 @@ const exportFromNotion = async (
     if (!task) throw new Error(`Task [${taskId}] not found.`);
     if (task.error) throw new Error(`Export failed with reason: ${task.error}`);
 
-    console.log(`[+] [index.ts] Exported ${task.status.pagesExported} pages/items.`);
+    // Check if task.status exists and has pagesExported property before accessing it
+    if (task.status && task.status.pagesExported !== undefined) {
+      console.log(`[+] [index.ts] Exported ${task.status.pagesExported} pages/items.`);
+    } else {
+      console.log(`[+] [index.ts] Waiting for export task [${taskId}]...`);
+    }
 
     /*
       once all tasks have finished -> task.state==="success", then grab file export URL and token
