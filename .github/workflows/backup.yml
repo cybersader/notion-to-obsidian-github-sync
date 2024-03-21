@@ -52,9 +52,16 @@ jobs:
 
           echo "Git status before add:"
           git status --porcelain
+          
           git add .
           echo "Git status after add:"
           git status --porcelain
-          git commit -m "Automated Notion workspace backup" --quiet
-          git status
-          git push --quiet
+          
+          # Check if there are changes to commit
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "Automated Notion workspace backup" --quiet
+            git status
+            git push --quiet
+          fi
